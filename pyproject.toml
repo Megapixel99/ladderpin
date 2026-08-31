@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ladderpin"
+version = "0.1.0"
+description = "Freeze what a function answers and report when that changes. assay's bundle, read in the other direction: the finding is difference, not sameness."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["regression", "characterization-test", "behaviour", "refactoring",
+            "golden", "pin", "assay", "differential-testing", "ci", "verification",
+            "cross-language", "port"]
+# LAYER 1. Two edges, and both are load-bearing.
+#
+# `assay-checks` produces the vectors and owns the ladder they are answers to. Nothing
+# here re-implements a probe -- `ladderpin` runs `assay bundle` as a subprocess and
+# compares documents, which is also why ONE implementation covers both languages: the
+# contract is a file rather than an API, and `assay`'s two halves emit the same envelope.
+# It is a runtime requirement rather than an import, so it is declared here and the CLI
+# names it (`--assay`) rather than guessing.
+#
+# `nondet` is the precondition, not a nicety. `assay` will happily probe
+# `str(set(text))` -- it returns a string, which the interlingua can state -- and that
+# string's order depends on PYTHONHASHSEED, so the vector is different in every process.
+# A pin on it is a check that fails at random and gets deleted, and the blame lands on
+# this tool. `nondet` addresses a function as FILE::NAME, which is exactly the address
+# `assay` records, so unlike the edge `undetermined` rejected, this guarantee can
+# actually run against the thing it is about. `tests/test_ladderpin.py` reproduces the
+# failure with the gate turned off rather than describing it.
+#
+# Dependencies point strictly downward; `tools/depgraph.py` in the reckoner tree asserts
+# it. Neither `assay-checks` nor `lexindex` may acquire a dependency, and nothing here
+# gives them one.
+dependencies = ["assay-checks>=0.5.0", "nondet>=0.0.1"]
+
+[project.scripts]
+ladderpin = "ladderpin.cli:main"
+
+# PYTHON ONLY, AND THAT IS A DECISION RATHER THAN AN OMISSION. `assay` ships two halves
+# because it probes code in two languages; this compares the DOCUMENT those halves emit,
+# and one reader is enough for both. A JavaScript tree is pinned with
+# `--assay assay` pointing at the npm binary. The second reason is `nondet`: it is
+# Python-only, and it is the gate that makes a pin safe to take at all -- a JavaScript
+# half would have to either ship without it or claim a check it never ran.
+
+[tool.setuptools]
+packages = ["ladderpin"]

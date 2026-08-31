@@ -1,0 +1,254 @@
+# A tool that reports what changed has to answer for the case where nothing did.
+#
+# The gates below are this package's own properties pointed back at it:
+#
+#   1. IT PINS ITS OWN EXAMPLE AND CHECKS IT. An unchanged tree must come back `held`.
+#
+#   2. AND IT CATCHES A CHANGE IN THAT SAME TREE. Gate 1 alone proves the happy path; a
+#      checker that always said `held` would satisfy it, and would be useless. The
+#      negative control edits one character of the example and requires exit 1.
+#
+#   3. AND IT DOES NOT SCORE AN UNPROBEABLE FUNCTION AS CLEAN. The third state is what
+#      separates this from a `diff` of two bundles, so it is asserted rather than trusted.
+#
+#   4. THE SUITE WAS NOT SKIPPED. Ten of the tests need a real `assay` and skip without
+#      one. In a tally a skip and a pass look identical.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor is what `pyproject.toml` claims, and the claim is checked rather than
+        # trusted. A sibling in this network shipped a 3.12-only f-string under a >=3.9
+        # claim and did not import at all on the version it advertised.
+        python-version: ['3.9', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: install the declared dependencies, and only those
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet .
+          python3 - <<'PY'
+          import tomllib
+          deps = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]
+          assert deps == ["assay-checks>=0.5.0", "nondet>=0.0.1"], f"drifted: {deps}"
+          PY
+          python3 -c "import ladderpin; print('ladderpin', ladderpin.__version__)"
+          python3 -c "import assay, nondet; print('assay and nondet are importable')"
+
+      - name: the suites, and none of them skipped
+        # `skipUnless(has_assay())` keeps the document-level tests runnable without the
+        # dependency installed. Here it IS installed, so a skip means something broke in
+        # the install rather than that the environment is thin.
+        run: |
+          set -euo pipefail
+          out=$(python3 -m unittest discover -s tests -v 2>&1)
+          echo "$out"
+          if echo "$out" | grep -q "skipped"; then
+            echo "::error::tests were SKIPPED with the dependencies installed"
+            exit 1
+          fi
+          ran=$(echo "$out" | grep -c " \.\.\. ok")
+          echo "assertions that ran: $ran"
+          if [ "$ran" -lt 20 ]; then
+            echo "::error::expected at least 20 tests, saw $ran"
+            exit 1
+          fi
+
+      - name: the tree came back
+        # This package writes nothing into the tree it reads, and a run that dirtied the
+        # checkout would be a defect in a tool whose whole job is telling you what changed.
+        run: git diff --exit-code
+
+  versions:
+    # THE VERSION LIVES IN TWO FILES AND THAT IS TWO PLACES TO DRIFT.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: both agree
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet .
+          py=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          # PYTHONDONTWRITEBYTECODE so this leaves no `.pyc` for a later job to read:
+          # cache invalidation is keyed on mtime at one-second granularity.
+          dunder=$(PYTHONDONTWRITEBYTECODE=1 python3 -c "import ladderpin; print(ladderpin.__version__)")
+          echo "pyproject=$py  __version__=$dunder"
+          if [ "$py" != "$dunder" ]; then
+            echo "::error::the two versions disagree"
+            exit 1
+          fi
+
+  itself:
+    # The tool pointed at its own example, and then at a broken copy of it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --quiet .
+
+      - name: it pins its own example and the pin holds
+        run: |
+          set -euo pipefail
+          ladderpin pin example/src -o /tmp/example.pin.json
+          ladderpin show /tmp/example.pin.json
+          ladderpin check /tmp/example.pin.json example/src
+
+      - name: ...and it catches a change in that same tree
+        # THE CONTROL FOR THE STEP ABOVE. Without it a checker that always said `held`
+        # would pass — which is precisely the failure it exists to report.
+        run: |
+          set -euo pipefail
+          cp example/src/prices.py /tmp/prices.orig
+          # A trap, not a line at the end: a failed assertion under `set -e` skips
+          # everything after it, and the step after this one checks that the tree came
+          # back. `git diff --exit-code` is the sentinel outside the shell, for the case
+          # the shell never gets to run its trap at all.
+          trap 'cp /tmp/prices.orig example/src/prices.py' EXIT
+          sed -i 's|"-".join|"_".join|' example/src/prices.py
+          set +e
+          ladderpin check /tmp/example.pin.json example/src -q
+          code=$?
+          set -e
+          cp /tmp/prices.orig example/src/prices.py
+          echo "exit=$code"
+          if [ "$code" -ne 1 ]; then
+            echo "::error::a changed function was not reported (exit $code)"
+            exit 1
+          fi
+
+      - name: ...and an unprobeable function is not scored as clean
+        # The state that separates this from a `diff` of two bundles.
+        run: |
+          set -euo pipefail
+          cp example/src/prices.py /tmp/prices.orig
+          trap 'cp /tmp/prices.orig example/src/prices.py' EXIT
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("example/src/prices.py")
+          p.write_text(p.read_text().replace(
+              "def label(text):\n    return str(text).upper()",
+              'def label(text):\n    open("/dev/null", "w").write("")\n'
+              "    return str(text).upper()"))
+          PY
+          out=$(ladderpin check /tmp/example.pin.json example/src -q); code=$?
+          echo "$out"
+          echo "exit=$code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::a look failed the run; only a change may do that"
+            exit 1
+          fi
+          if ! echo "$out" | grep -q "unprobeable"; then
+            echo "::error::a function assay now refuses was not reported as unprobeable"
+            exit 1
+          fi
+
+      - name: ...and an intended change is accepted with its reason, once
+        # The workflow the tool would otherwise push people into is `pin` again, which
+        # throws away every other pin in the file. This asserts the narrow path: one entry
+        # re-pinned, a reason recorded, the next check clean, and the other two untouched.
+        run: |
+          set -euo pipefail
+          cp example/src/prices.py /tmp/prices.orig
+          # A trap, not a line at the end: a failed assertion under `set -e` skips
+          # everything after it, and the step after this one checks that the tree came
+          # back. `git diff --exit-code` is the sentinel outside the shell, for the case
+          # the shell never gets to run its trap at all.
+          trap 'cp /tmp/prices.orig example/src/prices.py' EXIT
+          sed -i 's|"-".join|"_".join|' example/src/prices.py
+          ladderpin accept /tmp/example.pin.json example/src \
+            --all --reason "slugs use underscores now, per the URL scheme change"
+          ladderpin check /tmp/example.pin.json example/src
+          ladderpin show /tmp/example.pin.json | grep -q "slugs use underscores now"
+          python3 - <<'PY'
+          import json
+          with open("/tmp/example.pin.json") as fh:
+              pin = json.load(fh)
+          assert len(pin["entries"]) == 3, pin["entries"]
+          assert len(pin["accepted"]) == 1, pin["accepted"]
+          PY
+
+      - name: ...and accepting something that did not change is refused
+        # Rewriting a vector with the identical vector leaves a reason beside a decision
+        # nobody made.
+        run: |
+          set +e
+          out=$(ladderpin accept /tmp/example.pin.json example/src \
+                  --ref "example/src/prices.py::label" --reason "no")
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -ne 1 ]; then
+            echo "::error::accepting a held entry did not exit 1 (exit $code)"
+            exit 1
+          fi
+
+      - name: the tree came back
+        run: git diff --exit-code
+
+      - name: a pin with nothing in it is refused
+        # A pin holding no entries reports `0 changed` forever, which is the shape of a
+        # passing run.
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/empty/src
+          printf 'def nothing():\n    return 1\n' > /tmp/empty/src/mod.py
+          set +e
+          ladderpin pin /tmp/empty/src -o /tmp/empty/pin.json --root /tmp/empty
+          code=$?
+          set -e
+          echo "exit=$code"
+          if [ "$code" -ne 2 ]; then
+            echo "::error::an unpinnable tree did not exit 2 (exit $code)"
+            exit 1
+          fi
+          if [ -f /tmp/empty/pin.json ]; then
+            echo "::error::a pin with no entries was written anyway"
+            exit 1
+          fi
+
+  cli:
+    # The shipped entry point, from the built artifact rather than the source tree.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: install the built artifact, not the source tree
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet build
+          python3 -m build --wheel --outdir /tmp/dist
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet /tmp/dist/*.whl
+          if [ ! -x /tmp/venv/bin/ladderpin ]; then
+            echo '::error::the wheel installed but produced no ladderpin script'
+            exit 1
+          fi
+          /tmp/venv/bin/ladderpin --help
+          /tmp/venv/bin/ladderpin pin example/src -o /tmp/wheel.pin.json
+          /tmp/venv/bin/ladderpin check /tmp/wheel.pin.json example/src

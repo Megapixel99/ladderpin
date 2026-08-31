@@ -23,7 +23,7 @@ FINDINGS — 1:
 
 [`assay`](https://github.com/Megapixel99/assay-checks) already emits every probed
 function's behavioural vector as one JSON document, and already compares a tree against
-one. Both are **cross-sectional** — two trees, now — and the finding is **sameness**,
+one. Both are **cross-sectional** (two trees, now) and the finding is **sameness**,
 because the question `assay sweep` asks is duplication.
 
 Commit that document and the same substrate answers a different question:
@@ -36,14 +36,14 @@ against the original's *measured* behaviour rather than against tests somebody w
 
 **This is not a snapshot test.** Jest snapshots and `approvaltests` freeze *your* output,
 in *your* language, against inputs you chose. `assay`'s ladder is a **shared, versioned
-input document**, so a pin taken from a Python tree is comparable with a JavaScript one —
+input document**, so a pin taken from a Python tree is comparable with a JavaScript one:
 which is the property `assay cross` was built on and which no per-project snapshot can have.
 
 ## What is stored, and why the vectors are not hashed
 
 A digest would make the pin small and the report useless: `check` could say a function
-changed and not *which of its twenty-nine rungs* did. The rung is the actionable part —
-`V:"hello,-world!"` becoming `V:"hello,_world!"` names the input that told the two apart —
+changed and not *which of its twenty-nine rungs* did. The rung is the actionable part:
+`V:"hello,-world!"` becoming `V:"hello,_world!"` names the input that told the two apart,
 so the vectors are kept.
 
 The pin also records **what was not pinned and why**. Without that, `check` cannot tell a
@@ -85,7 +85,7 @@ not pinned — 1:
   src/mod.py::fingerprint — nondet found a witness: [-1] -> V:"{'1', '-'}" then V:"{'-', '1'}"
 ```
 
-`nondet` addresses a function as `FILE::NAME` and re-runs it in fresh interpreters — which
+`nondet` addresses a function as `FILE::NAME` and re-runs it in fresh interpreters, which
 is exactly the address `assay` records. That matters: `undetermined`, another package in
 this network, was offered a `nondet` edge and **rejected it** because its observables were
 closures with no such address, and a dependency that looks like a guarantee and is not is
@@ -97,13 +97,13 @@ a check reports it as `changed`. If that ever stops happening, the premise of th
 dependency is wrong and the suite says so in those words.
 
 Without `nondet` installed the pin is still written and every entry is marked
-`unchecked` — **which is not a pass**, and the report says so, because a silent skip and a
+`unchecked`: **which is not a pass**, and the report says so, because a silent skip and a
 clean check look identical in a tally.
 
 ## When the change was on purpose
 
 The answer is not to re-pin. `ladderpin pin` again rewrites the whole file, throws away
-every other pin in it, and leaves no record of what was decided — which is why the second
+every other pin in it, and leaves no record of what was decided, which is why the second
 time somebody sees a red `check` they stop reading it.
 
 ```sh
@@ -118,7 +118,7 @@ accepted 1 change(s) into behaviour.pin.json, with the reason recorded beside ea
 ```
 
 `--all` accepts every entry this run reports as `changed`, which is the shape of an
-intended refactor. **`--reason` is required** — `assay accept` writes findings into a
+intended refactor. **`--reason` is required**: `assay accept` writes findings into a
 baseline with a reason for the same argument, and an exemption nobody wrote a reason for
 is one nobody can review. The reason lands in the pin, beside the entry, where
 `ladderpin show` prints it and a reviewer reads it in the diff:
@@ -131,8 +131,8 @@ accepted changes — 1:
 **Only what actually changed.** Accepting a `held` entry would rewrite a vector with the
 identical vector and leave a reason beside a decision nobody made; accepting a `missing` or
 `unprobeable` one cannot work, because there is no new vector to take. Both are refused by
-name rather than skipped, so the command never reports having done something it did not do
-— and **any refusal exits non-zero**, including one standing beside a success. A typo in
+name rather than skipped, so the command never reports having done something it did not do;
+and **any refusal exits non-zero**, including one standing beside a success. A typo in
 one `--ref` of four is a thing the command did not do, and a script that reads only the
 exit code must not be told otherwise.
 
@@ -143,7 +143,7 @@ earlier run earned against a vector that is no longer there.
 
 **And the determinism gate runs again on the way in.** A function that has *become*
 nondeterministic must not be re-pinned: it would be accepted today, report as changed
-tomorrow, and carry a reason beside it saying the change was intended — the worst of both.
+tomorrow, and carry a reason beside it saying the change was intended: the worst of both.
 
 ## Three kinds of answer, and the third is what makes it usable
 
@@ -151,7 +151,7 @@ tomorrow, and carry a reason beside it saying the change was intended — the wo
 |---|---|---|
 | `held` | the vector is what it was | no |
 | `changed` | the vector moved, **on the same ladder** | **yes** |
-| `expired` | pinned on ladder `v3`, this tree probes `v4` — different questions | no |
+| `expired` | pinned on ladder `v3`, this tree probes `v4`: different questions | no |
 | `arity` | pinned at one arity, now another; the vectors are different documents | no |
 | `unprobeable` | `assay` now refuses it, or errored on it (it grew a call to `open()`) | no |
 | `missing` / `unpinned` | a pinned function is gone, or a new one appeared | no |
@@ -159,7 +159,7 @@ tomorrow, and carry a reason beside it saying the change was intended — the wo
 
 A tool that called every one of those a change would cry wolf on a file rename and be
 deleted in a week. One that called them `held` would say *no behaviour changed* about
-functions it never compared — which is `assay`'s own census rule:
+functions it never compared, which is `assay`'s own census rule:
 
 > a report that says `differs none` while staying quiet about what was never compared is
 > reporting *we never looked* as *we found none*.
@@ -194,7 +194,7 @@ claim a check it never ran.
 ## Exit codes
 
 `0` nothing pinned changed · `1` a pinned function answers differently · `2` this tool
-settled nothing — no `assay`, an unreadable pin, or **a pin with no entries**.
+settled nothing: no `assay`, an unreadable pin, or **a pin with no entries**.
 
 That last one is not pedantry. A pin holding nothing compares nothing and prints
 `0 changed`, which is the shape of a passing run and would stay green forever. `pin`
@@ -210,7 +210,7 @@ ladderpin: nothing to pin — assay probed no functions under src/.
 three hundred otherwise print the same clean line, and they are not the same result.
 
 **And a run that compared nothing says so.** Only a `changed` may fail the run, so a check
-whose every entry came back a look still exits 0 — which is what a `check` left pointing at
+whose every entry came back a look still exits 0, which is what a `check` left pointing at
 a renamed directory does forever. It prints `0 changed` like a clean one, so the run that
 settled nothing about behaviour names itself on stderr instead:
 
@@ -243,7 +243,7 @@ reports what it is doing:
 Interactively it rewrites one line as it goes; in a log it prints the header and the
 footer and nothing between, because a progress bar in CI output is three hundred lines of
 carriage returns nobody can read. `--no-determinism-check` skips the whole thing, and every
-entry is then marked `unchecked` — which is not a pass.
+entry is then marked `unchecked`, which is not a pass.
 
 ## Prior art
 
@@ -256,7 +256,7 @@ which is one product's fixture table rather than a tool.
 The real neighbours are approval testing (`approvaltests`, `jest` snapshots, `insta`) and
 behavioural diffing (`crosshair diffbehavior`). Approval tests freeze your own output
 against inputs you wrote, in one language, and cannot compare across a rewrite in another.
-`crosshair diffbehavior` compares two Python functions **symbolically and right now** — it
+`crosshair diffbehavior` compares two Python functions **symbolically and right now**; it
 is the better tool for *is this refactor equivalent*, and it is not a thing you commit and
 re-check for two years. This is the across-time, across-language case, and it is cheap
 because `assay` already did the hard part.
@@ -269,7 +269,7 @@ because `assay` already did the hard part.
 - **`assay` is a separate install** and is not vendored: `pip install assay-checks`, or
   `npm install -g assay-checks` for a JavaScript tree. It is run as a subprocess.
 - **Zero-arity functions and anything `assay` refuses are never pinned.** On a real tree
-  that is most of it — `assay`'s own census on `trainingResearch/tools` probed 9 of 41.
+  that is most of it: `assay`'s own census on `trainingResearch/tools` probed 9 of 41.
   The refused list is written into the pin so the coverage is visible rather than implied.
 - **A pin is per-ladder-version.** `assay` bumping `v3` to `v4` expires every pin taken
   before it, by design: the vectors are answers to a different set of inputs. That is the
@@ -284,7 +284,7 @@ python3 -m unittest discover -s tests
 ```
 
 32 tests. Seventeen run on synthetic documents and are instant; fifteen drive a real
-`assay` over a real tree and skip when it is not installed — CI asserts they were not skipped,
+`assay` over a real tree and skip when it is not installed: CI asserts they were not skipped,
 because a skip and a pass are identical in a tally.
 
 **The divergence gate is one test**: an unchanged tree must hold *and* a changed one must
@@ -301,7 +301,7 @@ probed, `accept` rewriting an entry that never changed, `accept` recording no re
 accepted, and `--json` reporting an exit code other than the one it returns.
 
 **Two survived their first run and both were real gaps in the new `accept` command.**
-Nothing asked what happens when a pinned function has *become* nondeterministic — it would
+Nothing asked what happens when a pinned function has *become* nondeterministic; it would
 be accepted today, report as changed tomorrow, and carry a reason beside it saying the
 change was intended. And the refusal test asserted the `accepted` map was still empty
 rather than that the file was byte for byte what it was, which a version that wrote the
@@ -310,19 +310,19 @@ refused to do anything.
 
 **A third was wrong rather than surviving**, for the second time in this round: writing an
 *unmodified* document produces identical bytes, so `if accepted:` → `if True:` changed
-nothing observable and scored as SURVIVED. Inverting the guard instead — never persisting
-what was accepted — is caught immediately. A mutation that cannot change behaviour reads as
+nothing observable and scored as SURVIVED. Inverting the guard instead, never persisting
+what was accepted: is caught immediately. A mutation that cannot change behaviour reads as
 a test gap, which is a mutation suite lying in the flattering direction.
 
 **One of them was found by the mutation harness breaking, which is the joke telling
-itself.** The harness edits a source file, runs the suite and restores it in a `finally` —
+itself.** The harness edits a source file, runs the suite and restores it in a `finally`:
 and the run exceeded its timeout and was SIGKILLed mid-mutation, so `finally` never ran and
 `compare.py` was left with `if False:` where the empty-pin guard belongs. That is
 [`restore-verified`](https://github.com/Megapixel99/restore-verified)'s fourth row exactly:
-*"SIGKILL / a timeout — nothing in-process can help; the file stays broken."*
+*"SIGKILL / a timeout; nothing in-process can help; the file stays broken."*
 
 Nothing silently scored against the broken tree, because the harness checks that the suite
-is green **before** the first mutation and refuses when it is not: `BASELINE IS RED — every
+is green **before** the first mutation and refuses when it is not: `BASELINE IS RED; every
 verdict below would be meaningless`. That is rule 1 of a mutation harness working on its
 author. The CI job below runs `git diff --exit-code` after the tool, for the same reason
 one level out.

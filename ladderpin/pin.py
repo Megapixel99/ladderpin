@@ -178,12 +178,18 @@ def read(path):
     return data
 
 
-def accept(pin, ref, record, reason, when=None):
+def accept(pin, ref, record, reason, when=None, determinism=None):
     """Replace one entry's vector with the one measured now, and say why.
 
     The alternative is `ladderpin pin` again, which is what people do and which throws
     away every other pin in the file along with the record of what was decided. This
     changes one entry and leaves a sentence beside it.
+
+    THE DETERMINISM VERDICT TRAVELS WITH THE VECTOR. It is a statement about the vector
+    being written, not about the entry's name, so an accept that took the gate off leaves
+    `unchecked` behind rather than the `deterministic` some earlier run earned against a
+    vector that is no longer in the file. A silent skip and a clean check look identical
+    in a tally, which is the whole reason this field says which it was.
     """
     for entry in pin["entries"]:
         if entry["ref"] != ref:
@@ -193,6 +199,8 @@ def accept(pin, ref, record, reason, when=None):
         entry["arity"] = record["arity"]
         entry["ref"] = record["ref"]
         entry["name"] = name_of(record["ref"])
+        if determinism is not None:
+            entry["determinism"], entry["determinism_detail"] = determinism
         pin.setdefault("accepted", {})[record["ref"]] = {
             "reason": reason,
             "when": when or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

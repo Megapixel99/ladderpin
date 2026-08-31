@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -22,7 +23,8 @@ sys.path.insert(0, ROOT)
 from ladderpin import (AMBIGUOUS, ARITY, CHANGED, EXPIRED, HELD, MISSING,  # noqa: E402
                        UNPINNED, UNPROBEABLE, BundleError, compare, exit_code,
                        first_difference, parse, summarise)
-from ladderpin.bundle import relative_ref                                  # noqa: E402
+from ladderpin.bundle import normalise, relative_ref, split_command        # noqa: E402
+from ladderpin.pin import UNCHECKED, accept                                # noqa: E402
 
 
 def has_assay():
@@ -108,6 +110,34 @@ class MakingRefsPortable(unittest.TestCase):
             self.assertEqual(relative_ref(outside, os.path.join(tmp, "deep", "root")),
                              outside)
 
+    def test_a_census_path_outside_the_root_is_left_alone_like_a_ref(self):
+        """The census goes through the same rule the refs do.
+
+        A `../../vendor/x.py` key names a different file wherever the pin is read, and the
+        bare `relpath` this used to call raises across Windows drives — which would take a
+        whole `pin` run down over a key nothing compares.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "root")
+            os.makedirs(os.path.join(root, "src"))
+            inside = os.path.join(root, "src", "a.py")
+            outside = os.path.join(tmp, "vendor", "b.py")
+            bundle = {"assay_bundle": 1, "records": [],
+                      "census": {"unloadable_paths": {inside: "syntax error",
+                                                      outside: "syntax error"}}}
+            paths = normalise(bundle, root)["census"]["unloadable_paths"]
+            self.assertEqual(sorted(paths), sorted(["src/a.py", outside]))
+
+    def test_a_windows_assay_path_keeps_its_backslashes(self):
+        """POSIX splitting reads `C:\\venv\\Scripts\\assay.exe` as `C:venvScriptsassay.exe`
+        and then reports that this tool cannot run a path nobody typed."""
+        command = r"C:\venv\Scripts\assay.exe"
+        with unittest.mock.patch("ladderpin.bundle.os.name", "nt"):
+            self.assertEqual(split_command(command), [command])
+        self.assertEqual(split_command("assay"), ["assay"])
+        self.assertEqual(split_command(f"{sys.executable} -m assay.cli"),
+                         [sys.executable, "-m", "assay.cli"])
+
     def test_a_document_that_is_not_a_bundle_is_refused(self):
         for text in ('{"hello": 1}', "not json at all",
                      '{"assay_bundle": 99, "records": []}',
@@ -176,6 +206,27 @@ class TheComparison(unittest.TestCase):
         self.assertEqual(outcomes[0].state, UNPROBEABLE)
         self.assertIn("calls open()", outcomes[0].detail)
 
+    def test_a_record_assay_errored_on_is_a_look_and_never_a_vector(self):
+        """`pin` refuses these at pinning time; reading one here as though it held a
+        vector dies on the missing `ladder`, and an uncaught KeyError leaves this process
+        with exit 1 — which in this tool's contract means a pinned function changed."""
+        errored = {"ref": "src/a.py::f", "arity": 1, "language": "python",
+                   "error": "probe raised TypeError"}
+        outcomes = compare(pin_of([entry("src/a.py::f")]), bundle_of([errored]))
+        self.assertEqual([o.state for o in outcomes], [UNPROBEABLE])
+        self.assertIn("TypeError", outcomes[0].detail)
+
+    def test_a_deleted_function_is_not_matched_to_one_another_entry_pins(self):
+        """Two files defining `f`, one of them deleted. Reading the entries in order, the
+        deleted one used to claim the survivor as a move and report `held` — scoring a
+        deleted function clean against somebody else's vector."""
+        outcomes = compare(
+            pin_of([entry("src/a.py::f"), entry("src/b.py::f")]),
+            bundle_of([record("src/b.py::f")]))
+        self.assertEqual([(o.ref, o.state) for o in outcomes],
+                         [("src/a.py::f", MISSING), ("src/b.py::f", HELD)])
+        self.assertEqual(exit_code(outcomes, 2), 0)
+
     def test_a_pinned_function_that_is_simply_gone_is_a_look(self):
         outcomes = compare(pin_of([entry("src/a.py::f")]), bundle_of([]))
         self.assertEqual(outcomes[0].state, MISSING)
@@ -209,6 +260,30 @@ class TheComparison(unittest.TestCase):
                                       record("src/a.py::h")]))
         self.assertEqual(summarise(outcomes),
                          {HELD: 1, CHANGED: 1, UNPINNED: 1})
+
+
+class WhatAcceptWritesBack(unittest.TestCase):
+    """The document half of `accept`, which needs no assay."""
+
+    def test_the_determinism_verdict_travels_with_the_vector(self):
+        """It is a statement about the vector in the file, not about the entry's name. An
+        accept that took the gate off leaving `deterministic` behind is the entry claiming
+        a check that never ran against what it now holds."""
+        pin = pin_of([entry("src/a.py::f", vector=("V:1", "V:2"))])
+        self.assertEqual(pin["entries"][0]["determinism"], "deterministic")
+        moved = record("src/a.py::f", vector=("V:1", "V:9"))
+        self.assertTrue(accept(pin, "src/a.py::f", moved, "rounds up now",
+                               determinism=(UNCHECKED, "the determinism check was "
+                                                       "turned off")))
+        self.assertEqual(pin["entries"][0]["vector"], ["V:1", "V:9"])
+        self.assertEqual(pin["entries"][0]["determinism"], UNCHECKED)
+        self.assertIn("turned off", pin["entries"][0]["determinism_detail"])
+        self.assertEqual(pin["accepted"]["src/a.py::f"]["reason"], "rounds up now")
+
+    def test_a_ref_that_is_not_in_the_pin_is_not_accepted(self):
+        pin = pin_of([entry("src/a.py::f")])
+        self.assertFalse(accept(pin, "src/gone.py::f", record("src/gone.py::f"), "no"))
+        self.assertEqual(pin.get("accepted", {}), {})
 
 
 @unittest.skipUnless(has_assay(), "assay-checks is not installed")

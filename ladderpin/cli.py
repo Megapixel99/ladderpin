@@ -150,6 +150,17 @@ def _check(args):
     outcomes = compare(document, bundle)
     counts = summarise(outcomes)
     pinned = len(document["entries"])
+    compared = counts.get(HELD, 0) + counts.get(CHANGED, 0)
+    if pinned and not compared:
+        # NOTHING WAS COMPARED, WHICH IS NOT THE SAME AS NOTHING CHANGED. A pin whose
+        # every entry comes back a look prints `0 changed` and exits clean, which is the
+        # shape of a passing run — and is what a `check` pointed at a renamed directory
+        # does forever. Only a change may fail the run, so this says so instead.
+        sys.stderr.write(
+            f"ladderpin: NOTHING WAS COMPARED — all {pinned} pinned function(s) came back "
+            f"as looks, so this run settled nothing about behaviour.\n"
+            f"           A run that compares nothing prints `0 changed` like a clean one. "
+            f"Check that\n           the paths given still hold the pinned tree.\n")
 
     if getattr(args, "json", False):
         # The numbers, for whatever reads this instead of a person. The exit code is in
@@ -229,6 +240,7 @@ def _accept(args):
         if record is None:
             refused.append((ref, "assay did not probe it in this run"))
             continue
+        determinism = (pinning.UNCHECKED, "the determinism check was turned off")
         if not args.no_determinism_check:
             # A FUNCTION THAT BECAME NONDETERMINISTIC MUST NOT BE RE-PINNED. It would be
             # accepted today and report as changed tomorrow, with a reason beside it
@@ -238,7 +250,10 @@ def _accept(args):
             if state == pinning.REFUSED:
                 refused.append((ref, f"nondet now refuses it — {detail}"))
                 continue
-        if pinning.accept(document, ref, record, args.reason):
+            determinism = (state, detail)
+        # The verdict goes in beside the vector it is about. Leaving the old one there
+        # would have the entry claim a check that never ran against what is now in the file.
+        if pinning.accept(document, ref, record, args.reason, determinism=determinism):
             accepted.append(ref)
 
     if accepted:
@@ -249,7 +264,11 @@ def _accept(args):
             print(f"  {ref}")
     for ref, why in refused:
         print(f"  refused  {ref} — {why}")
-    return 1 if refused and not accepted else 0
+    # ANY REFUSAL IS A NON-ZERO EXIT, including one beside a success. A typo in one
+    # `--ref` of four, or one entry of an `--all` that nondet now refuses, is a thing the
+    # command did not do, and a script that reads only the exit code must not be told the
+    # whole accept went through.
+    return 1 if refused else 0
 
 
 def _show(args):

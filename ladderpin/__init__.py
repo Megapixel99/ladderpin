@@ -18,4 +18,4 @@ __all__ = ["collect", "parse", "normalise", "BundleError", "build", "read", "wri
            "tally", "compare", "summarise", "exit_code", "first_difference", "Outcome",
            "HELD", "CHANGED", "EXPIRED", "ARITY", "UNPROBEABLE", "MISSING", "UNPINNED",
            "AMBIGUOUS", "FINDINGS", "LOOKS", "CHECKED", "UNCHECKED", "REFUSED"]
-__version__ = "0.1.1"
+__version__ = "0.1.2"

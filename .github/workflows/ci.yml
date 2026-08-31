@@ -162,7 +162,13 @@ jobs:
               'def label(text):\n    open("/dev/null", "w").write("")\n'
               "    return str(text).upper()"))
           PY
-          out=$(ladderpin check /tmp/example.pin.json example/src -q); code=$?
+          # `set +e` around it, like the steps above: under `set -e` an assignment from a
+          # command substitution that exits non-zero kills the step then and there, so
+          # `code` could only ever be 0 and the guard below could never print its reason.
+          set +e
+          out=$(ladderpin check /tmp/example.pin.json example/src -q)
+          code=$?
+          set -e
           echo "$out"
           echo "exit=$code"
           if [ "$code" -ne 0 ]; then

@@ -131,7 +131,15 @@ accepted changes — 1:
 **Only what actually changed.** Accepting a `held` entry would rewrite a vector with the
 identical vector and leave a reason beside a decision nobody made; accepting a `missing` or
 `unprobeable` one cannot work, because there is no new vector to take. Both are refused by
-name rather than skipped, so the command never reports having done something it did not do.
+name rather than skipped, so the command never reports having done something it did not do
+— and **any refusal exits non-zero**, including one standing beside a success. A typo in
+one `--ref` of four is a thing the command did not do, and a script that reads only the
+exit code must not be told otherwise.
+
+**The determinism verdict is rewritten with the vector**, because it is a statement about
+the vector in the file rather than about the entry's name. An accept run with
+`--no-determinism-check` leaves `unchecked` behind rather than the `deterministic` some
+earlier run earned against a vector that is no longer there.
 
 **And the determinism gate runs again on the way in.** A function that has *become*
 nondeterministic must not be re-pinned: it would be accepted today, report as changed
@@ -145,7 +153,7 @@ tomorrow, and carry a reason beside it saying the change was intended — the wo
 | `changed` | the vector moved, **on the same ladder** | **yes** |
 | `expired` | pinned on ladder `v3`, this tree probes `v4` — different questions | no |
 | `arity` | pinned at one arity, now another; the vectors are different documents | no |
-| `unprobeable` | `assay` now refuses it (it grew a call to `open()`) | no |
+| `unprobeable` | `assay` now refuses it, or errored on it (it grew a call to `open()`) | no |
 | `missing` / `unpinned` | a pinned function is gone, or a new one appeared | no |
 | `ambiguous` | it moved, and two functions share its name and arity | no |
 
@@ -200,6 +208,16 @@ ladderpin: nothing to pin — assay probed no functions under src/.
 
 **The denominator is always printed.** A pin covering three functions and a pin covering
 three hundred otherwise print the same clean line, and they are not the same result.
+
+**And a run that compared nothing says so.** Only a `changed` may fail the run, so a check
+whose every entry came back a look still exits 0 — which is what a `check` left pointing at
+a renamed directory does forever. It prints `0 changed` like a clean one, so the run that
+settled nothing about behaviour names itself on stderr instead:
+
+```
+ladderpin: NOTHING WAS COMPARED — all 3 pinned function(s) came back as looks, so this
+           run settled nothing about behaviour.
+```
 
 `ladderpin check --json` prints the outcomes, the summary and **the exit code it is about
 to return**, because something deciding what to do next should not have to run the process

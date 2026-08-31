@@ -91,12 +91,28 @@ def first_difference(was, now):
 
 def compare(pin, bundle):
     """Every pinned entry, plus everything in the tree the pin does not cover."""
-    records = {r["ref"]: r for r in bundle["records"]}
+    # A RECORD ASSAY COULD NOT COMPLETE IS NOT A VECTOR. `pin.build` refuses these at
+    # pinning time; reading one here as though it held a vector is how a comparison dies on
+    # a missing `ladder` -- and a KeyError leaves this process with exit 1, which in this
+    # tool's own contract means a pinned function changed. It is a `look`, like every other
+    # thing a vector comparison cannot settle.
+    records, errored = {}, {}
+    for record in bundle["records"]:
+        if record.get("error"):
+            errored[record["ref"]] = record["error"]
+        else:
+            records[record["ref"]] = record
     skipped = (bundle.get("census") or {}).get("skipped_refs") or {}
     by_name = {}
-    for ref, record in records.items():
+    for record in records.values():
         by_name.setdefault((record["ref"].rpartition("::")[2], record["arity"]),
                            []).append(record)
+
+    # A RECORD SOME ENTRY PINS AT ITS OWN PATH IS NEVER A MOVE CANDIDATE, and that is
+    # claimed up front rather than as the loop goes. Otherwise the entry that happens to be
+    # read first takes a function a later entry pins outright: two files defining `f`, one
+    # of them deleted, and the deleted one reports `held` against somebody else's vector.
+    claimed = {entry["ref"] for entry in pin["entries"] if entry["ref"] in records}
 
     outcomes = []
     matched = set()
@@ -109,8 +125,15 @@ def compare(pin, bundle):
                 outcomes.append(Outcome(ref, UNPROBEABLE,
                                         f"assay now refuses to probe it: {skipped[ref]}"))
                 continue
+            if ref in errored:
+                outcomes.append(Outcome(
+                    ref, UNPROBEABLE,
+                    f"assay could not probe it in this run: {errored[ref]} — the behaviour "
+                    f"may have changed and nothing here can tell"))
+                continue
             candidates = by_name.get((entry["name"], entry["arity"]), [])
-            free = [c for c in candidates if c["ref"] not in matched]
+            free = [c for c in candidates
+                    if c["ref"] not in matched and c["ref"] not in claimed]
             if len(free) == 1:
                 record = free[0]
                 moved_to = record["ref"]
@@ -161,6 +184,8 @@ def compare(pin, bundle):
                 f"only a person decides whether this change was intended",
                 rung=index, was=was, now=now, moved_to=moved_to))
 
+    # Errored records are not swept up here: `pin` would refuse them too, so telling
+    # somebody to `ladderpin pin` again to cover one is advice that cannot work.
     for ref in sorted(records):
         if ref not in matched:
             outcomes.append(Outcome(ref, UNPINNED,

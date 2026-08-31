@@ -47,8 +47,16 @@ jobs:
           set -euo pipefail
           python3 -m pip install --quiet .
           python3 - <<'PY'
-          import tomllib
-          deps = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]
+          # NOT tomllib, which is 3.11+. This step runs on every version in the
+          # matrix INCLUDING the 3.9 floor the manifest promises, so the check that
+          # verifies the claim could not run on the version it verifies -- it failed
+          # with `No module named 'tomllib'` on the first CI run this package ever had.
+          # `tools/depgraph.py` in the reckoner tree carries the same fallback for the
+          # same reason.
+          import re
+          text = open("pyproject.toml", encoding="utf-8").read()
+          block = re.search(r"^dependencies\s*=\s*\[(.*?)\]", text, re.M | re.S)
+          deps = re.findall(r'"([^"]+)"', block.group(1)) if block else []
           assert deps == ["assay-checks>=0.5.0", "nondet>=0.0.1"], f"drifted: {deps}"
           PY
           python3 -c "import ladderpin; print('ladderpin', ladderpin.__version__)"
@@ -250,5 +258,13 @@ jobs:
             exit 1
           fi
           /tmp/venv/bin/ladderpin --help
-          /tmp/venv/bin/ladderpin pin example/src -o /tmp/wheel.pin.json
-          /tmp/venv/bin/ladderpin check /tmp/wheel.pin.json example/src
+          # `--assay` NAMED, not left to PATH. `assay` is a RUNTIME dependency this
+          # package shells out to rather than imports, and `pip install` put its console
+          # script in the venv's `bin`, which is not on PATH here. The first CI run
+          # failed with this package's own message -- "cannot run 'assay' ... name it
+          # with --assay if it is not on PATH" -- which is the flag working as designed,
+          # in the one job that installs the artifact instead of the source.
+          /tmp/venv/bin/ladderpin pin example/src -o /tmp/wheel.pin.json \
+            --assay /tmp/venv/bin/assay
+          /tmp/venv/bin/ladderpin check /tmp/wheel.pin.json example/src \
+            --assay /tmp/venv/bin/assay

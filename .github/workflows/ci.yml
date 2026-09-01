@@ -13,6 +13,25 @@
 #
 #   4. THE SUITE WAS NOT SKIPPED. Ten of the tests need a real `assay` and skip without
 #      one. In a tally a skip and a pass look identical.
+#
+# GATES 2, 3 AND 4 USED TO BE HAND-ROLLED SHELL, AND THEY ARE NOW `didrun` AND
+# `zerocase` -- two siblings in this network that exist for exactly these two questions.
+#
+#   `didrun`   asks whether a command RAN, whether it FAILED, and whether the failure
+#              was the RIGHT one, and refuses to collapse any two of the three. The
+#              negative controls below wanted precisely that distinction and were
+#              writing it out longhand: `set +e`, `code=$?`, `-ne 1`. A run that exits 1
+#              because the CLI crashed before it read anything looked, to that shell,
+#              exactly like a run that caught the mutation.
+#
+#   `zerocase` asks it of a report the runner already wrote, and returns `executed`
+#              separately from `total` -- which is gate 4 exactly. `grep -q "skipped"`
+#              over the console text is a claim about unittest's human-facing wording;
+#              `<testcase>` minus `<skipped/>` is the number in a field with a name.
+#
+# A second copy of a guarantee is a second thing to get wrong, and the copy is the one
+# that does not get the upstream's tests. So the longhand is gone rather than kept
+# alongside.
 name: ci
 
 on:
@@ -25,6 +44,14 @@ on:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
+
+env:
+  # THE FLOOR IS THE WHOLE SUITE, NOT A ROUND NUMBER BELOW IT. `zerocase` subtracts
+  # skips before it compares, so `executed >= 38` says "all 38 ran" and "none of them
+  # skipped" in one number -- which is what the old pair of a `>= 20` count and a
+  # `grep -q skipped` was reaching for. It has to be bumped when a test is added. That
+  # is the cost of the floor meaning something.
+  MIN_TESTS: '38'
 
 jobs:
   suite:
@@ -41,6 +68,24 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: install the guards
+        # Both ship a Python half as well (`pip install didrun zerocase`), and the
+        # command is the same either way. npm is used here so the guards are installed
+        # from a registry this package does not otherwise touch: a `pip install` into
+        # the same environment as `ladderpin` could resolve a shared transitive
+        # dependency and quietly change what the suite below is running against.
+        # `zerocase` depends on `didrun`, and both are named anyway rather than left to
+        # a transitive install.
+        run: |
+          set -euo pipefail
+          npm install -g zerocase
+          npm install -g @megapixel99/didrun
+          zerocase --help > /dev/null
+          didrun --help > /dev/null
 
       - name: install the declared dependencies, and only those
         run: |
@@ -62,24 +107,35 @@ jobs:
           python3 -c "import ladderpin; print('ladderpin', ladderpin.__version__)"
           python3 -c "import assay, nondet; print('assay and nondet are importable')"
 
+      - name: install the report writer, which is CI's and not the package's
+        # `unittest-xml-reporting` is `unittest`'s own discovery with a different result
+        # writer, so the suite CI runs is the suite a contributor runs. It is NOT added
+        # to `pyproject.toml` -- the step above asserts the dependency list is exactly
+        # two entries, and this is a thing the harness needs, not the package.
+        run: python3 -m pip install --quiet unittest-xml-reporting
+
       - name: the suites, and none of them skipped
         # `skipUnless(has_assay())` keeps the document-level tests runnable without the
         # dependency installed. Here it IS installed, so a skip means something broke in
         # the install rather than that the environment is thin.
+        #
+        # `zerocase` reads the reports rather than the console: `executed` is
+        # `<testcase>` minus `<skipped/>`, and the floor applies to `executed`. A run in
+        # which `assay` failed to install reports 23 of 38 and exits 3, naming both
+        # numbers, where the old `grep -q "skipped"` could only say that the word
+        # appeared. Exit 3 is `did-not-run`, and it is distinct from a suite that failed.
+        #
+        # The reports are written OUTSIDE the checkout so the "tree came back" step
+        # below is answering about this package and not about its own leftovers.
+        # `unittest-xml-reporting` stamps a timestamp into each filename and never
+        # overwrites, so the glob is what is passed; `zerocase` sums only the files this
+        # run actually wrote and names any leftovers it left out.
         run: |
           set -euo pipefail
-          out=$(python3 -m unittest discover -s tests -v 2>&1)
-          echo "$out"
-          if echo "$out" | grep -q "skipped"; then
-            echo "::error::tests were SKIPPED with the dependencies installed"
-            exit 1
-          fi
-          ran=$(echo "$out" | grep -c " \.\.\. ok")
-          echo "assertions that ran: $ran"
-          if [ "$ran" -lt 20 ]; then
-            echo "::error::expected at least 20 tests, saw $ran"
-            exit 1
-          fi
+          rm -rf "$RUNNER_TEMP/reports"
+          mkdir -p "$RUNNER_TEMP/reports"
+          zerocase --junit "$RUNNER_TEMP/reports/*.xml" --min-junit "$MIN_TESTS" -- \
+            python3 -m xmlrunner discover -s tests -v -o "$RUNNER_TEMP/reports"
 
       - name: the tree came back
         # This package writes nothing into the tree it reads, and a run that dirtied the
@@ -110,24 +166,43 @@ jobs:
 
   itself:
     # The tool pointed at its own example, and then at a broken copy of it.
+    #
+    # EVERY STEP HERE IS WRAPPED IN `didrun`, because every step here is an assertion
+    # about an exit code, and an exit code is the thing that cannot answer the question
+    # being asked of it. The evidence patterns are the point: `--expect-count
+    # '([0-9]+) changed'` reads the number out of the summary line, so a run that
+    # printed `0 changed` is scored `did-not-run` (exit 3) rather than being handed to a
+    # `-ne 1` test that cannot tell it from a crash.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - run: npm install -g @megapixel99/didrun
       - run: python3 -m pip install --quiet .
 
       - name: it pins its own example and the pin holds
+        # `pinned N function(s)` and `N held` are both read as counts. A `pin` that
+        # wrote an empty file and a `check` that compared nothing both exit 0.
         run: |
           set -euo pipefail
-          ladderpin pin example/src -o /tmp/example.pin.json
+          didrun --expect-count 'pinned ([0-9]+) function' --min 1 -- \
+            ladderpin pin example/src -o /tmp/example.pin.json
           ladderpin show /tmp/example.pin.json
-          ladderpin check /tmp/example.pin.json example/src
+          didrun --expect-count '([0-9]+) held' --min 3 -- \
+            ladderpin check /tmp/example.pin.json example/src
 
       - name: ...and it catches a change in that same tree
         # THE CONTROL FOR THE STEP ABOVE. Without it a checker that always said `held`
         # would pass — which is precisely the failure it exists to report.
+        #
+        # `--expect-failure` is the half the longhand could not express: it is not enough
+        # that `ladderpin check` exited 1, it has to have exited 1 while naming
+        # `slugify` as changed. A CLI that died on an unreadable pin file also exits 1.
         run: |
           set -euo pipefail
           cp example/src/prices.py /tmp/prices.orig
@@ -137,19 +212,30 @@ jobs:
           # the shell never gets to run its trap at all.
           trap 'cp /tmp/prices.orig example/src/prices.py' EXIT
           sed -i 's|"-".join|"_".join|' example/src/prices.py
+          # `set +e` still, because `ran-and-failed` forwards the command's own status
+          # and 1 is the answer this step WANTS. What `didrun` adds is that 1 now means
+          # only one thing: 3 is "never reported a change at all" and 4 is "failed, but
+          # not the way this step said it would".
           set +e
-          ladderpin check /tmp/example.pin.json example/src -q
+          didrun --expect-count '([0-9]+) changed' --min 1 \
+                 --expect-failure 'changed\s+example/src/prices\.py::slugify' \
+                 -- ladderpin check /tmp/example.pin.json example/src -q
           code=$?
           set -e
-          cp /tmp/prices.orig example/src/prices.py
           echo "exit=$code"
           if [ "$code" -ne 1 ]; then
-            echo "::error::a changed function was not reported (exit $code)"
+            echo "::error::a changed function was not reported (exit $code; 3=no change reported, 4=failed the wrong way)"
             exit 1
           fi
 
       - name: ...and an unprobeable function is not scored as clean
         # The state that separates this from a `diff` of two bundles.
+        #
+        # NO INVERSION LEFT IN THIS STEP AT ALL. It used to need `set +e` and two
+        # separate guards -- one that the exit code was 0, one that the word
+        # `unprobeable` appeared -- because those are two different questions and the
+        # shell had to ask them separately. `didrun` asks both: the evidence must be
+        # found AND the command must exit 0, so `set -euo pipefail` carries the step.
         run: |
           set -euo pipefail
           cp example/src/prices.py /tmp/prices.orig
@@ -162,23 +248,8 @@ jobs:
               'def label(text):\n    open("/dev/null", "w").write("")\n'
               "    return str(text).upper()"))
           PY
-          # `set +e` around it, like the steps above: under `set -e` an assignment from a
-          # command substitution that exits non-zero kills the step then and there, so
-          # `code` could only ever be 0 and the guard below could never print its reason.
-          set +e
-          out=$(ladderpin check /tmp/example.pin.json example/src -q)
-          code=$?
-          set -e
-          echo "$out"
-          echo "exit=$code"
-          if [ "$code" -ne 0 ]; then
-            echo "::error::a look failed the run; only a change may do that"
-            exit 1
-          fi
-          if ! echo "$out" | grep -q "unprobeable"; then
-            echo "::error::a function assay now refuses was not reported as unprobeable"
-            exit 1
-          fi
+          didrun --expect 'unprobeable\s+example/src/prices\.py::label' -- \
+            ladderpin check /tmp/example.pin.json example/src -q
 
       - name: ...and an intended change is accepted with its reason, once
         # The workflow the tool would otherwise push people into is `pin` again, which
@@ -193,9 +264,12 @@ jobs:
           # the shell never gets to run its trap at all.
           trap 'cp /tmp/prices.orig example/src/prices.py' EXIT
           sed -i 's|"-".join|"_".join|' example/src/prices.py
-          ladderpin accept /tmp/example.pin.json example/src \
-            --all --reason "slugs use underscores now, per the URL scheme change"
-          ladderpin check /tmp/example.pin.json example/src
+          # `accepted 0 change(s)` exits 0 and is the failure this step is about.
+          didrun --expect-count 'accepted ([0-9]+) change' --min 1 -- \
+            ladderpin accept /tmp/example.pin.json example/src \
+              --all --reason "slugs use underscores now, per the URL scheme change"
+          didrun --expect-count '([0-9]+) held' --min 3 -- \
+            ladderpin check /tmp/example.pin.json example/src
           ladderpin show /tmp/example.pin.json | grep -q "slugs use underscores now"
           python3 - <<'PY'
           import json
@@ -207,16 +281,19 @@ jobs:
 
       - name: ...and accepting something that did not change is refused
         # Rewriting a vector with the identical vector leaves a reason beside a decision
-        # nobody made.
+        # nobody made. `--expect-failure` pins the REASON for the refusal, not just that
+        # something was refused: `accept` exits 1 for a missing pin file too.
         run: |
           set +e
-          out=$(ladderpin accept /tmp/example.pin.json example/src \
-                  --ref "example/src/prices.py::label" --reason "no")
+          didrun --expect 'refused\s+example/src/prices\.py::label' \
+                 --expect-failure 'only a changed vector can be accepted' \
+                 -- ladderpin accept /tmp/example.pin.json example/src \
+                      --ref "example/src/prices.py::label" --reason "no"
           code=$?
           set -e
-          echo "$out"
+          echo "exit=$code"
           if [ "$code" -ne 1 ]; then
-            echo "::error::accepting a held entry did not exit 1 (exit $code)"
+            echo "::error::accepting a held entry did not exit 1 (exit $code; 3=no refusal reported, 4=refused for the wrong reason)"
             exit 1
           fi
 
@@ -225,18 +302,21 @@ jobs:
 
       - name: a pin with nothing in it is refused
         # A pin holding no entries reports `0 changed` forever, which is the shape of a
-        # passing run.
+        # passing run. Which is this whole file's subject, so the message it refuses
+        # with is asserted rather than just the number it exits with.
         run: |
           set -euo pipefail
           mkdir -p /tmp/empty/src
           printf 'def nothing():\n    return 1\n' > /tmp/empty/src/mod.py
           set +e
-          ladderpin pin /tmp/empty/src -o /tmp/empty/pin.json --root /tmp/empty
+          didrun --expect 'nothing to pin' \
+                 --expect-failure 'A pin with no entries' \
+                 -- ladderpin pin /tmp/empty/src -o /tmp/empty/pin.json --root /tmp/empty
           code=$?
           set -e
           echo "exit=$code"
           if [ "$code" -ne 2 ]; then
-            echo "::error::an unpinnable tree did not exit 2 (exit $code)"
+            echo "::error::an unpinnable tree did not exit 2 (exit $code; 3=no refusal reported, 4=refused for the wrong reason)"
             exit 1
           fi
           if [ -f /tmp/empty/pin.json ]; then
@@ -252,6 +332,10 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - run: npm install -g @megapixel99/didrun
       - name: install the built artifact, not the source tree
         run: |
           set -euo pipefail
@@ -270,7 +354,12 @@ jobs:
           # failed with this package's own message -- "cannot run 'assay' ... name it
           # with --assay if it is not on PATH" -- which is the flag working as designed,
           # in the one job that installs the artifact instead of the source.
-          /tmp/venv/bin/ladderpin pin example/src -o /tmp/wheel.pin.json \
-            --assay /tmp/venv/bin/assay
-          /tmp/venv/bin/ladderpin check /tmp/wheel.pin.json example/src \
-            --assay /tmp/venv/bin/assay
+          #
+          # Counted rather than merely run: the failure this job exists to catch is a
+          # wheel that ships a script which starts, prints nothing useful and exits 0.
+          didrun --expect-count 'pinned ([0-9]+) function' --min 1 -- \
+            /tmp/venv/bin/ladderpin pin example/src -o /tmp/wheel.pin.json \
+              --assay /tmp/venv/bin/assay
+          didrun --expect-count '([0-9]+) held' --min 3 -- \
+            /tmp/venv/bin/ladderpin check /tmp/wheel.pin.json example/src \
+              --assay /tmp/venv/bin/assay

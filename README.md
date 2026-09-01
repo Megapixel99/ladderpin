@@ -287,9 +287,17 @@ because `assay` already did the hard part.
 python3 -m unittest discover -s tests
 ```
 
-32 tests. Seventeen run on synthetic documents and are instant; fifteen drive a real
+38 tests. Twenty-three run on synthetic documents and are instant; fifteen drive a real
 `assay` over a real tree and skip when it is not installed: CI asserts they were not skipped,
-because a skip and a pass are identical in a tally.
+because a skip and a pass are identical in a tally. That assertion is [`zerocase`][zerocase],
+which reads the `<testcase>` elements the run wrote and subtracts the ones holding
+`<skipped/>`, so the floor of 38 is a floor on what *executed* rather than on what was
+collected. Its companion [`didrun`][didrun] carries the negative controls in the same
+workflow: each one has to fail, and fail for the stated reason, or it is scored as not
+having run at all.
+
+[zerocase]: https://github.com/Megapixel99/zerocase
+[didrun]: https://github.com/Megapixel99/didrun
 
 **The divergence gate is one test**: an unchanged tree must hold *and* a changed one must
 not, asserted together, so that a checker which always said `held` and one which always

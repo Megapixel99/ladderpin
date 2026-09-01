@@ -1,5 +1,9 @@
 # `ladderpin`
 
+[![PyPI](https://img.shields.io/pypi/v/ladderpin)](https://pypi.org/project/ladderpin/)
+[![CI](https://github.com/Megapixel99/ladderpin/actions/workflows/ci.yml/badge.svg)](https://github.com/Megapixel99/ladderpin/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Freeze what a function answers. Find out when that changes.**
 
 ```sh
